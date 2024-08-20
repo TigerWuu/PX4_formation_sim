@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="control" exec="manual_control" name="manual_control"/>
+  <node pkg="joy" exec="joy_node" name="joy_node"/>
+</launch>

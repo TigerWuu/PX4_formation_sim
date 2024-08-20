@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="commander" exec="formation_control" name="formation_control"/>
+  <node pkg="commander" exec="virtual_leader" name="virtual_leader"/>
+</launch>
