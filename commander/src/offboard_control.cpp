@@ -42,12 +42,15 @@
 #include <px4_msgs/msg/trajectory_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_attitude.hpp>
+#include <px4_msgs/msg/airspeed_validated.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_control_mode.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <stdint.h>
+
+#include <std_msgs/msg/float32_multi_array.hpp>
 
 #include <chrono>
 #include <iostream>
@@ -69,16 +72,18 @@ public:
 		vehicle_attitude_publisher_ = this->create_publisher<VehicleAttitudeSetpoint>("/fmu/in/vehicle_attitude_setpoint", 10);
 		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
 		
+		cmd_info_publisher_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("command_information", 10);
 		// subscriber
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 
 		vehicle_attitude_subscriber_ = this->create_subscription<VehicleAttitude>("/fmu/out/vehicle_attitude", qos, std::bind(&OffboardControl::vehicle_attitude_callback,this, _1));	
+		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>("/fmu/out/airspeed_validated", qos, std::bind(&OffboardControl::vehicle_airspeed_callback,this, _1));	
 		offboard_setpoint_counter_ = 0;
 
+		this->Va_set = 22.0;
 		auto timer_callback = [this]() -> void {
 
-			this->Va = 20;
 			if (offboard_setpoint_counter_ == 10) {
 				// Change to Offboard mode after 10 setpoints
 				this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
@@ -91,7 +96,7 @@ public:
 			this->publish_offboard_control_mode();
 			// this->publish_trajectory_setpoint();
 			this->publish_attitude_setpoint();
-			// this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_CHANGE_SPEED, 0, this->Va ,-1);
+			this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_CHANGE_SPEED, 0, this->Va_set ,-1);
 			// std::cout <<"changing speed : "<< this->Va << std::endl;
 
 			std::cout<<"damn!!" << std::endl;
@@ -100,7 +105,7 @@ public:
 				offboard_setpoint_counter_++;
 			}
 		};
-		timer_ = this->create_wall_timer(100ms, timer_callback);
+		timer_ = this->create_wall_timer(20ms, timer_callback); // 50 Hz
 	}
 
 	void arm();
@@ -114,7 +119,9 @@ private:
 	rclcpp::Publisher<VehicleAttitudeSetpoint>::SharedPtr vehicle_attitude_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 	
+	rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr cmd_info_publisher_;
 	rclcpp::Subscription<VehicleAttitude>::SharedPtr vehicle_attitude_subscriber_ ;
+	rclcpp::Subscription<AirspeedValidated>::SharedPtr vehicle_airspeed_subscriber_ ;
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
 
 	uint64_t offboard_setpoint_counter_;   //!< counter for the number of setpoints sent
@@ -124,10 +131,12 @@ private:
 	void publish_attitude_setpoint();
 	void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0, float param3= 0.0, float param4= 0.0, float param5= 0.0, float param6= 0.0, float param7= 0.0);
 	void vehicle_attitude_callback(const VehicleAttitude &msg);
-	unsigned int Va;
+	void vehicle_airspeed_callback(const AirspeedValidated &msg);
 	double roll = 0.0;
 	double pitch = 0.0;
 	double yaw = 0.0;
+	float Va = 0.0;
+	float Va_set = 0.0;
 };
 
 /**
@@ -155,6 +164,16 @@ void OffboardControl::vehicle_attitude_callback(const VehicleAttitude &msg)
 	tf2::Quaternion current_att_quat(msg.q[1], msg.q[2], msg.q[3], msg.q[0]); // xyzw
 	tf2::Matrix3x3 m(current_att_quat);
 	m.getRPY(roll,pitch, yaw);
+}
+
+void OffboardControl::vehicle_airspeed_callback(const AirspeedValidated &msg)
+{
+	Va = msg.true_airspeed_m_s;
+	// float Va_ias = msg.indicated_airspeed_m_s;
+	// float Va_cas = msg.calibrated_airspeed_m_s;
+	// std::cout << "ias : "<<Va_ias << std::endl;
+	// std::cout << "cas : "<<Va_cas << std::endl;
+
 }
 /**
  * @brief Publish the offboard control mode.
@@ -191,32 +210,41 @@ void OffboardControl::publish_trajectory_setpoint()
 void OffboardControl::publish_attitude_setpoint()
 {
 	VehicleAttitudeSetpoint attitude_msg;
+	std_msgs::msg::Float32MultiArray cmdInfo;
 	tf2::Quaternion attitude_quat;
 	float roll_set = M_PI/36;
-	float pitch_set = M_PI/36;
-	float yaw_set = -M_PI;
-	float k_y = 0.2;
-	float yaw_err = yaw_set-yaw;
-	while (yaw_err < -M_PI){
-		yaw_err += 2*M_PI;
-	}
-	while (yaw_err > M_PI){
-		yaw_err -= 2*M_PI;
-	}
-	// std::cout << "yaw err : "<< yaw_err<< std::endl;
-	roll_set = (yaw_err)*k_y;
-	attitude_quat.setRPY(0, pitch_set, yaw_set);
+	float pitch_set = 0; // 5 deg
+	float yaw_set = M_PI/3; // 60 deg
+	// float k_y = 0.2;
+	// float yaw_err = yaw_set-yaw;
+	// while (yaw_err < -M_PI){
+	// 	yaw_err += 2*M_PI;
+	// }
+	// while (yaw_err > M_PI){
+	// 	yaw_err -= 2*M_PI;
+	// }
+	// roll_set = (yaw_err)*k_y;
+	attitude_quat.setRPY(roll_set, pitch_set, yaw_set);
 	attitude_quat.normalized();
 	// attitude_quat.setRPY(0.0, M_PI/18, 0.0);
 	attitude_msg.q_d ={float(attitude_quat.w()),float(attitude_quat.x()),float(attitude_quat.y()),float(attitude_quat.z())}; // w, x, y, z
-	// attitude_msg.yaw_body = 0;
-	// attitude_msg.pitch_body = M_PI/18;
-	attitude_msg.yaw_sp_move_rate = M_PI/18;
-	attitude_msg.thrust_body = {0.3 ,0.0, 0.0};
-	// attitude_msg.thrust_body = {NAN ,NAN, NAN};
-
+	attitude_msg.thrust_body = {NAN ,0.0, 0.0};
+	std::cout << "pitch_err : " << pitch_set - pitch << std::endl;
+	std::cout << "yaw_err : " << yaw_set - yaw << std::endl;
+	std::cout << "Va_err : " << this->Va_set - this->Va << std::endl;
 	attitude_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	this->vehicle_attitude_publisher_->publish(attitude_msg);
+	cmdInfo.data.push_back(pitch_set);
+	cmdInfo.data.push_back(this->pitch);
+	cmdInfo.data.push_back(pitch_set-this->pitch);
+	cmdInfo.data.push_back(yaw_set);
+	cmdInfo.data.push_back(this->yaw);
+	cmdInfo.data.push_back(yaw_set-this->yaw);
+	cmdInfo.data.push_back(this->Va_set);
+	cmdInfo.data.push_back(this->Va);
+	cmdInfo.data.push_back(this->Va_set-this->Va);
+
+	this->cmd_info_publisher_->publish(cmdInfo);
 }
 /**
  * @brief Publish vehicle commands

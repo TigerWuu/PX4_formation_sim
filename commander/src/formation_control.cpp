@@ -74,15 +74,17 @@ public:
 		// publisher
 		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
 		trajectory_setpoint_publisher_ = this->create_publisher<TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
-		// vehicle_airspeed_publisher_ = this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
 		vehicle_attitude_publisher_ = this->create_publisher<VehicleAttitudeSetpoint>("/fmu/in/vehicle_attitude_setpoint", 10);
 		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
+		
+		formation_error_publisher_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/data/formation_error", 10);
 		// subscriber
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 
 		vehicle_position_subscriber_ = this->create_subscription<VehicleLocalPosition>("/fmu/out/vehicle_local_position", qos, std::bind(&FormationControl::vehicle_position_callback,this, _1));
 		virtual_leader_subscriber_ = this->create_subscription<std_msgs::msg::Float32MultiArray>("/virtual_leader_information", qos, std::bind(&FormationControl::virtual_leader_callback, this, _1));
+		wind_estimation_subscriber_ = this->create_subscription<std_msgs::msg::Float32MultiArray>("/wind_estimation_information", qos, std::bind(&FormationControl::wind_estimation_callback, this, _1));
 		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>("/fmu/out/vehicle_status", qos, std::bind(&FormationControl::vehicle_status_callback, this, _1));
 		// client
 		vehicle_command_client_ = this->create_client<px4_msgs::srv::VehicleCommand>("/fmu/vehicle_command");
@@ -113,7 +115,7 @@ public:
 				offboard_setpoint_counter_++;
 			}
 		};
-		timer_ = this->create_wall_timer(100ms, timer_callback);
+		timer_ = this->create_wall_timer(20ms, timer_callback);
 	}
 
 	void arm();
@@ -124,13 +126,15 @@ private:
 
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
 	rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
-	// rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_airspeed_publisher_;
 	rclcpp::Publisher<VehicleAttitudeSetpoint>::SharedPtr vehicle_attitude_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
+	
+	rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr formation_error_publisher_;
 	
 	rclcpp::Subscription<VehicleLocalPosition>::SharedPtr vehicle_position_subscriber_ ;
 	rclcpp::Subscription<VehicleStatus>::SharedPtr vehicle_status_subscriber_ ;
 	rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr virtual_leader_subscriber_;
+	rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr wind_estimation_subscriber_;
 
 	rclcpp::Client<px4_msgs::srv::VehicleCommand>::SharedPtr vehicle_command_client_;
 	
@@ -153,6 +157,7 @@ private:
 	void virtual_leader_callback(const std_msgs::msg::Float32MultiArray &msg);
 	void vehicle_position_callback(const VehicleLocalPosition &msg);
 	void vehicle_status_callback(const VehicleStatus &msg);
+	void wind_estimation_callback(const std_msgs::msg::Float32MultiArray &msg);
 
 	// follower information 
 	Vector3f vehicle_position_NED = Vector3f (0.0,0.0,0.0);
@@ -163,14 +168,20 @@ private:
 	float leader_z_dot = 0.0;
 	float leader_Vg = 0.0;
 	// formation
-	float gain[3] = {15.0,5.0,5.0}; // le, fe, he
-	Vector3f formation_desired = Vector3f (4.0,4.0,4.0);
+	float gain[3] = {1.0,0.2,1.0}; // le, fe, he
+	Vector3f formation_desired = Vector3f (0.0,0.0,0.0);
 	Vector3f formation_error = Vector3f (0.0,0.0,0.0);
 	void formation_geometry();
 	void Lyapunov_based_formation_controller();
 	
 	// vehicle status
 	unsigned int vehicle_type=1; 
+
+	// wind information
+	bool wind_est = true;
+	float w_l_hat = 0.0;
+	float w_f_hat = 0.0;
+	float w_h_hat = 0.0;
 };
 // UniquePtr instead?
 void FormationControl::virtual_leader_callback(const std_msgs::msg::Float32MultiArray &msg)
@@ -190,7 +201,15 @@ void FormationControl::vehicle_position_callback(const VehicleLocalPosition &msg
 
 void FormationControl::vehicle_status_callback(const VehicleStatus &msg)
 {
-	vehicle_type = msg.vehicle_type;
+	this->vehicle_type = msg.vehicle_type;
+}
+
+void FormationControl::wind_estimation_callback(const std_msgs::msg::Float32MultiArray &msg)
+{
+	this->w_l_hat = msg.data[0];
+	this->w_f_hat = msg.data[1];
+	this->w_h_hat = msg.data[2];
+
 }
 void FormationControl::formation_geometry()
 {	
@@ -200,6 +219,14 @@ void FormationControl::formation_geometry()
 		{0         ,  0         ,-1}
 	};
 	this->formation_error = transMatrix*(this->leader_position_NED - this->vehicle_position_NED) - this->formation_desired; 
+	
+	// send formation error
+	std_msgs::msg::Float32MultiArray formationErrInfo{};
+	formationErrInfo.data.push_back(this->formation_error[0]);
+	formationErrInfo.data.push_back(this->formation_error[1]);
+	formationErrInfo.data.push_back(this->formation_error[2]);
+	this->formation_error_publisher_->publish(formationErrInfo);
+
 }
 
 void FormationControl::Lyapunov_based_formation_controller()
@@ -213,26 +240,37 @@ void FormationControl::Lyapunov_based_formation_controller()
 	float lc = this->formation_desired[0];
 	float fc = this->formation_desired[1];
 	// float hc = this->formation_desired[2];
-
+	float psi_Fc = 0.0;
+	float Va_Fc = 0.0; 	
+	float theta_Fc = 0.0;
 	// controller
-	float chi_Fc = atan2f(-c1*le-this->leader_angular*fc, c2*fe-this->leader_angular*lc+this->leader_Vg)+this->leader_course;
-	float V_Fc = sqrt(pow((c1*le+this->leader_angular*fc),2)+pow((c2*fe-this->leader_angular*lc+this->leader_Vg),2));
-	float theta_Fc = asinf((c3*he-this->leader_z_dot)/V_Fc);
+	if (this->wind_est){
+		psi_Fc = atan2f(-c1*le-this->leader_angular*fc-this->w_l_hat, c2*fe-this->leader_angular*lc+this->leader_Vg+this->w_f_hat)+this->leader_course;
+		Va_Fc = sqrt(pow((c1*le+this->leader_angular*fc+this->w_l_hat),2)+pow((c2*fe-this->leader_angular*lc+this->leader_Vg+this->w_f_hat),2));
+		theta_Fc = asinf((c3*he-this->leader_z_dot+this->w_h_hat)/Va_Fc);
+	}
+	else {
+		psi_Fc = atan2f(-c1*le-this->leader_angular*fc, c2*fe-this->leader_angular*lc+this->leader_Vg)+this->leader_course;
+		Va_Fc = sqrt(pow((c1*le+this->leader_angular*fc),2)+pow((c2*fe-this->leader_angular*lc+this->leader_Vg),2));
+		theta_Fc = asinf((c3*he-this->leader_z_dot)/Va_Fc);
+	}
 	
 	// send control command
 	VehicleAttitudeSetpoint attitude_msg{};
 	tf2::Quaternion attitude_quat;
 	
-	attitude_quat.setRPY(0, theta_Fc, chi_Fc);
+	attitude_quat.setRPY(0, theta_Fc, psi_Fc);
 	attitude_quat.normalized();
 	attitude_msg.q_d ={float(attitude_quat.w()),float(attitude_quat.x()),float(attitude_quat.y()),float(attitude_quat.z())}; // w, x, y, z
-
+	attitude_msg.thrust_body = {NAN ,0.0, 0.0};
 	attitude_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+	
 	this->vehicle_attitude_publisher_->publish(attitude_msg);
-	this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_CHANGE_SPEED, 0, V_Fc,-1);
+	this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_CHANGE_SPEED, 0, Va_Fc,-1);
 	std::cout<<"Command sending..."<<std::endl;
-	std::cout<<"Va : "<< V_Fc << std::endl;
-	std::cout<<"Chi : "<< chi_Fc << std::endl;
+	std::cout<<"Va_Fc : "<< Va_Fc << std::endl;
+	std::cout<<"Psi_Fc : "<< psi_Fc << std::endl;
+	std::cout<<"theta_Fc : "<< theta_Fc << std::endl;
 	
 }
 /**

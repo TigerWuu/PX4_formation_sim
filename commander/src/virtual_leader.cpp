@@ -124,7 +124,7 @@ void VirtualLeader::virtual_leader_information()
 	std::cout << "Time now: " << t_now << std::endl;
 	std::cout << "Time : " << t << std::endl;
 	std_msgs::msg::Float32MultiArray leaderInfo;
-	float radii = 200.0;
+	float radii = 400.0;
 	float omega = 0.0;
 	float x_L_dot = 0.0;
 	float y_L_dot = 0.0;
@@ -135,19 +135,28 @@ void VirtualLeader::virtual_leader_information()
 	{
 		case 'C':
 			omega = this->Vg_L/radii;
-			this->x_L = radii*sin(omega*t);
-			this->y_L = radii*cos(omega*t);
+			this->x_L = radii*sinf(omega*t);
+			this->y_L = radii*cosf(omega*t);
 			this->z_L = -90.0;
-			x_L_dot = radii*omega*cos(omega*t);
-			y_L_dot = -radii*omega*sin(omega*t);
+			x_L_dot = radii*omega*cosf(omega*t);
+			y_L_dot = -radii*omega*sinf(omega*t);
 			this->z_L_dot = 0.0;
-			x_L_dotdot = -radii*pow(omega,2)*sin(omega*t);
-			y_L_dotdot = -radii*pow(omega,2)*cos(omega*t);
+			x_L_dotdot = -radii*pow(omega,2)*sinf(omega*t);
+			y_L_dotdot = -radii*pow(omega,2)*cosf(omega*t);
 			this->course_L = atan2f(y_L_dot, x_L_dot);
 			this->course_L_dot = (y_L_dotdot*x_L_dot-x_L_dotdot*y_L_dot)/(pow(x_L_dot,2)+pow(y_L_dot,2));
 			break;
 		case 'L':
-			std::cout<< "Straight line path !!!"<<std::endl;
+			this->x_L = this->Vg_L*t*sinf(M_PI/4);
+			this->y_L = this->Vg_L*t*cosf(M_PI/4);
+			this->z_L = -90.0;
+			x_L_dot = this->Vg_L*sinf(M_PI/4);
+			y_L_dot = this->Vg_L*cosf(M_PI/4);
+			this->z_L_dot = 0.0;
+			this->course_L = atan2f(y_L_dot, x_L_dot);
+			this->course_L_dot = 0;
+		
+			// std::cout<< "Straight line path !!!"<<std::endl;
 			break;
 		default:
 			std::cout<< "No trajectory !!!"<<std::endl;

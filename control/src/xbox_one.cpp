@@ -182,7 +182,7 @@ void ManualControl::joy_bluetooth(const sensor_msgs::msg::Joy &msg)
 void ManualControl::joy_callback(const sensor_msgs::msg::Joy &msg)
 {	
 	joy_wire(msg);
-	joy_bluetooth(msg);
+	// joy_bluetooth(msg);
     
 	// UDleft = (UDleft+1)/2;
 	manual_cmd.roll = -LRright;
