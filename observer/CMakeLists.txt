@@ -11,11 +11,18 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(self_msg REQUIRED)
 
 add_executable(wind_observer src/wind_observer.cpp)
-ament_target_dependencies(wind_observer px4_msgs rclcpp std_msgs tf2)
+ament_target_dependencies(wind_observer px4_msgs rclcpp std_msgs tf2 self_msg)
 install(TARGETS
   wind_observer
+  DESTINATION lib/${PROJECT_NAME})
+  
+add_executable(wind_observer_g src/wind_observer_g.cpp)
+ament_target_dependencies(wind_observer_g px4_msgs rclcpp std_msgs tf2 self_msg)
+install(TARGETS
+  wind_observer_g
   DESTINATION lib/${PROJECT_NAME})
   
 if(BUILD_TESTING)

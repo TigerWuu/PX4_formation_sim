@@ -45,10 +45,13 @@
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_control_mode.hpp>
 #include <px4_msgs/srv/vehicle_command.hpp>
+#include <px4_msgs/msg/vehicle_status.hpp>
 
 #include <rclcpp/rclcpp.hpp>
+
 #include <std_msgs/msg/string.hpp> //WTF?
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include "self_msg/msg/float32_multi_array_stamped.hpp"
 
 #include <stdint.h>
 #include <chrono>
@@ -68,43 +71,41 @@ class VirtualLeader : public rclcpp::Node
 {
 public:
 	VirtualLeader() : Node("virtual_leader")
-	{
-		// publisher
-		virtual_leader_information_publisher_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("virtual_leader_information", 10);
+	{			
+		// subscriber
+		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
+		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 		
-		/* auto timer_callback = [this]() -> void {
-			if (offboard_setpoint_counter_ == 10) {
-				// Change to Offboard mode after 10 setpoints
-				this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
-			}
-			// calculate the formation geometry
-			this->formation_geometry();
-			// offboard_control_mode needs to be paired with trajectory_setpoint
-			this->publish_offboard_control_mode(attitude = true);
-			this->Lyapunov_based_formation_controller()
-			//publish_trajectory_setpoint();
+		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>("/fmu/out/vehicle_status", qos, std::bind(&VirtualLeader::vehicle_status_callback, this, _1));
+		// define trajectory
+		this->declare_parameter<std::string>("trajectory", "L");
+		this->declare_parameter<double>("direction", 0.0);
+		this->trajectory = this->get_parameter("trajectory").as_string()[0];
+		this->dir = this->get_parameter("direction").as_double();
 
-			// stop the counter after reaching 11
-			if (offboard_setpoint_counter_ < 11) {
-				offboard_setpoint_counter_++;
-			}
-		};*/
+		// publisher
+		virtual_leader_information_publisher_ = this->create_publisher<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", 10);
 		
+		// while (this->vehicle_type == 1){
+		// 	std::cout << "Waiting for FW ..." <<std::endl;
+		//}
 		this->t0 = this->get_clock()->now().seconds(); // s 
-		this->trajectory = 'C';
-		this->timer_ = this->create_wall_timer(100ms, std::bind(&VirtualLeader::virtual_leader_information, this));
+		this->timer_ = this->create_wall_timer(20ms, std::bind(&VirtualLeader::virtual_leader_information, this));
 	}
 
 private:
 	rclcpp::TimerBase::SharedPtr timer_;
 
-	rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr virtual_leader_information_publisher_;
+	rclcpp::Publisher<self_msg::msg::Float32MultiArrayStamped>::SharedPtr virtual_leader_information_publisher_;
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
-
+	
+	rclcpp::Subscription<VehicleStatus>::SharedPtr vehicle_status_subscriber_ ;
+	
 	char trajectory; //Circular path 
 	double t0; // s 
 	// leader information
 	void virtual_leader_information();
+	void vehicle_status_callback(const VehicleStatus &msg);
 	
 	float x_L = 0.0;
 	float y_L = 0.0;
@@ -113,18 +114,22 @@ private:
 	float course_L_dot = 0.0;
 	float z_L_dot = 0.0;
 	float Vg_L = 18.0;
+	float dir = 0.0;
+	// vehicle status
+	unsigned int vehicle_type = 1; 
+	unsigned int in_transition_fw = 0; 
 };
 // UniquePtr instead?
 void VirtualLeader::virtual_leader_information()
 {	
-	std::cout.precision(10);
+	std::cout.precision(15);
 	double t_now = this->get_clock()->now().seconds();
 	double t = t_now - this->t0;
 	std::cout << "Time 0: " << this->t0 << std::endl;
 	std::cout << "Time now: " << t_now << std::endl;
 	std::cout << "Time : " << t << std::endl;
-	std_msgs::msg::Float32MultiArray leaderInfo;
-	float radii = 400.0;
+	self_msg::msg::Float32MultiArrayStamped leaderInfo;
+	float radii = 200.0;
 	float omega = 0.0;
 	float x_L_dot = 0.0;
 	float y_L_dot = 0.0;
@@ -135,23 +140,23 @@ void VirtualLeader::virtual_leader_information()
 	{
 		case 'C':
 			omega = this->Vg_L/radii;
-			this->x_L = radii*sinf(omega*t);
-			this->y_L = radii*cosf(omega*t);
-			this->z_L = -90.0;
-			x_L_dot = radii*omega*cosf(omega*t);
-			y_L_dot = -radii*omega*sinf(omega*t);
+			this->x_L = radii*cosf(omega*t);
+			this->y_L = radii*sinf(omega*t);
+			this->z_L = -20.0;
+			x_L_dot = -radii*omega*sinf(omega*t);
+			y_L_dot = radii*omega*cosf(omega*t);
 			this->z_L_dot = 0.0;
-			x_L_dotdot = -radii*pow(omega,2)*sinf(omega*t);
-			y_L_dotdot = -radii*pow(omega,2)*cosf(omega*t);
+			x_L_dotdot = -radii*pow(omega,2)*cosf(omega*t);
+			y_L_dotdot = -radii*pow(omega,2)*sinf(omega*t);
 			this->course_L = atan2f(y_L_dot, x_L_dot);
 			this->course_L_dot = (y_L_dotdot*x_L_dot-x_L_dotdot*y_L_dot)/(pow(x_L_dot,2)+pow(y_L_dot,2));
 			break;
 		case 'L':
-			this->x_L = this->Vg_L*t*sinf(M_PI/4);
-			this->y_L = this->Vg_L*t*cosf(M_PI/4);
-			this->z_L = -90.0;
-			x_L_dot = this->Vg_L*sinf(M_PI/4);
-			y_L_dot = this->Vg_L*cosf(M_PI/4);
+			this->x_L = this->Vg_L*t*cosf(dir);
+			this->y_L = this->Vg_L*t*sinf(dir);
+			this->z_L = -20.0;
+			x_L_dot = this->Vg_L*cosf(dir);
+			y_L_dot = this->Vg_L*sinf(dir);
 			this->z_L_dot = 0.0;
 			this->course_L = atan2f(y_L_dot, x_L_dot);
 			this->course_L_dot = 0;
@@ -162,14 +167,20 @@ void VirtualLeader::virtual_leader_information()
 			std::cout<< "No trajectory !!!"<<std::endl;
 			break;
 	}
-	leaderInfo.data.push_back(this->x_L);
-	leaderInfo.data.push_back(this->y_L);
-	leaderInfo.data.push_back(this->z_L);
-	leaderInfo.data.push_back(this->course_L);
-	leaderInfo.data.push_back(this->course_L_dot);
-	leaderInfo.data.push_back(this->z_L_dot);
-	leaderInfo.data.push_back(this->Vg_L);
+	leaderInfo.timestamp = t_now*1e6;
+	leaderInfo.array.data.push_back(this->x_L);
+	leaderInfo.array.data.push_back(this->y_L);
+	leaderInfo.array.data.push_back(this->z_L);
+	leaderInfo.array.data.push_back(this->course_L);
+	leaderInfo.array.data.push_back(this->course_L_dot);
+	leaderInfo.array.data.push_back(this->z_L_dot);
+	leaderInfo.array.data.push_back(this->Vg_L);
 	this->virtual_leader_information_publisher_->publish(leaderInfo);
+}
+void VirtualLeader::vehicle_status_callback(const VehicleStatus &msg)
+{
+	this->vehicle_type = msg.vehicle_type;
+	this->in_transition_fw = msg.in_transition_to_fw;
 }
 
 int main(int argc, char *argv[])

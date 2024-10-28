@@ -1,0 +1,2 @@
+/usr/bin/ar qc lib/libWindEffects.a CMakeFiles/WindEffects.dir/WindEffects.cc.o
+/usr/bin/ranlib lib/libWindEffects.a

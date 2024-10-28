@@ -45,6 +45,8 @@
 #include <std_msgs/msg/float32_multi_array.h>
 #include <stdint.h>
 
+#include "self_msg/msg/float32_multi_array_stamped.hpp"
+
 #include <chrono>
 #include <iostream>
 

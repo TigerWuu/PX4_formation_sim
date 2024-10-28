@@ -51,9 +51,12 @@
 #include <stdint.h>
 
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include "self_msg/msg/float32_multi_array_stamped.hpp"
 
 #include <chrono>
 #include <iostream>
+#include <iomanip>
+#include <cmath>
 
 using namespace std::chrono;
 using namespace std::chrono_literals;
@@ -72,7 +75,7 @@ public:
 		vehicle_attitude_publisher_ = this->create_publisher<VehicleAttitudeSetpoint>("/fmu/in/vehicle_attitude_setpoint", 10);
 		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
 		
-		cmd_info_publisher_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("command_information", 10);
+		cmd_info_publisher_ = this->create_publisher<self_msg::msg::Float32MultiArrayStamped>("command_information", 10);
 		// subscriber
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
@@ -81,7 +84,7 @@ public:
 		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>("/fmu/out/airspeed_validated", qos, std::bind(&OffboardControl::vehicle_airspeed_callback,this, _1));	
 		offboard_setpoint_counter_ = 0;
 
-		this->Va_set = 22.0;
+		this->Va_set = 25.0;
 		auto timer_callback = [this]() -> void {
 
 			if (offboard_setpoint_counter_ == 10) {
@@ -99,7 +102,6 @@ public:
 			this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_CHANGE_SPEED, 0, this->Va_set ,-1);
 			// std::cout <<"changing speed : "<< this->Va << std::endl;
 
-			std::cout<<"damn!!" << std::endl;
 			// stop the counter after reaching 11
 			if (offboard_setpoint_counter_ < 11) {
 				offboard_setpoint_counter_++;
@@ -119,7 +121,7 @@ private:
 	rclcpp::Publisher<VehicleAttitudeSetpoint>::SharedPtr vehicle_attitude_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 	
-	rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr cmd_info_publisher_;
+	rclcpp::Publisher<self_msg::msg::Float32MultiArrayStamped>::SharedPtr cmd_info_publisher_;
 	rclcpp::Subscription<VehicleAttitude>::SharedPtr vehicle_attitude_subscriber_ ;
 	rclcpp::Subscription<AirspeedValidated>::SharedPtr vehicle_airspeed_subscriber_ ;
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
@@ -210,11 +212,13 @@ void OffboardControl::publish_trajectory_setpoint()
 void OffboardControl::publish_attitude_setpoint()
 {
 	VehicleAttitudeSetpoint attitude_msg;
-	std_msgs::msg::Float32MultiArray cmdInfo;
+	self_msg::msg::Float32MultiArrayStamped cmdInfo;
 	tf2::Quaternion attitude_quat;
+	// double t_now = this->get_clock()->now().seconds();
 	float roll_set = M_PI/36;
-	float pitch_set = 0; // 5 deg
-	float yaw_set = M_PI/3; // 60 deg
+	float pitch_set = M_PI/36; // 5 deg
+	float yaw_set = M_PI/4; // 45 deg
+	// float yaw_set = M_PI/4+ M_PI/24*sinl(t_now*0.6); // 60 deg
 	// float k_y = 0.2;
 	// float yaw_err = yaw_set-yaw;
 	// while (yaw_err < -M_PI){
@@ -234,15 +238,19 @@ void OffboardControl::publish_attitude_setpoint()
 	std::cout << "Va_err : " << this->Va_set - this->Va << std::endl;
 	attitude_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	this->vehicle_attitude_publisher_->publish(attitude_msg);
-	cmdInfo.data.push_back(pitch_set);
-	cmdInfo.data.push_back(this->pitch);
-	cmdInfo.data.push_back(pitch_set-this->pitch);
-	cmdInfo.data.push_back(yaw_set);
-	cmdInfo.data.push_back(this->yaw);
-	cmdInfo.data.push_back(yaw_set-this->yaw);
-	cmdInfo.data.push_back(this->Va_set);
-	cmdInfo.data.push_back(this->Va);
-	cmdInfo.data.push_back(this->Va_set-this->Va);
+	
+	cmdInfo.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+	cmdInfo.array.data.push_back(this->Va_set);
+	cmdInfo.array.data.push_back(this->Va);
+	cmdInfo.array.data.push_back(this->Va_set-this->Va);
+	
+	cmdInfo.array.data.push_back(yaw_set);
+	cmdInfo.array.data.push_back(this->yaw);
+	cmdInfo.array.data.push_back(yaw_set-this->yaw);
+	
+	cmdInfo.array.data.push_back(pitch_set);
+	cmdInfo.array.data.push_back(this->pitch);
+	cmdInfo.array.data.push_back(pitch_set-this->pitch);
 
 	this->cmd_info_publisher_->publish(cmdInfo);
 }
