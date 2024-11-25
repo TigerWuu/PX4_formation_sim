@@ -1,19 +1,24 @@
 <launch>
   <arg name="trajectory" default="L"/>
-  <arg name="wind_com" default="com_off"/>
+  <arg name="wind_com" default="none"/>
   <arg name="L_dir" default="0.0"/>
+  <arg name="radii" default="200.0"/>
   <arg name="L" default="1.0"/>
-  
+  <arg name="L2" default="0.1"/>
+
   <node pkg="commander" exec="formation_control" output="screen" name="formation_control">
+    <param name="gc" value="2.5, 14.0, 0.0" value-sep=", "/>
   	<param name="wind_com" value="$(var wind_com)"/>
   </node>
   
   <node pkg="observer" exec="wind_observer_g" output="screen" name="wind_observer">
   	<param name="L" value="$(var L)"/>
+  	<param name="L2" value="$(var L2)"/>
   </node>
-  
+ 
   <node pkg="commander" exec="virtual_leader" output="screen" name="virtual_leader">
   	<param name="trajectory" value="$(var trajectory)"/>
   	<param name="direction" value="$(var L_dir)"/>
+  	<param name="radii" value="$(var radii)"/>
   </node>
 </launch>

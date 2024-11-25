@@ -80,8 +80,10 @@ public:
 		// define trajectory
 		this->declare_parameter<std::string>("trajectory", "L");
 		this->declare_parameter<double>("direction", 0.0);
+		this->declare_parameter<double>("radii", 200.0);
 		this->trajectory = this->get_parameter("trajectory").as_string()[0];
 		this->dir = this->get_parameter("direction").as_double();
+		this->radii = this->get_parameter("radii").as_double();
 
 		// publisher
 		virtual_leader_information_publisher_ = this->create_publisher<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", 10);
@@ -115,6 +117,7 @@ private:
 	float z_L_dot = 0.0;
 	float Vg_L = 18.0;
 	float dir = 0.0;
+	float radii = 200.0;
 	// vehicle status
 	unsigned int vehicle_type = 1; 
 	unsigned int in_transition_fw = 0; 
@@ -129,7 +132,6 @@ void VirtualLeader::virtual_leader_information()
 	std::cout << "Time now: " << t_now << std::endl;
 	std::cout << "Time : " << t << std::endl;
 	self_msg::msg::Float32MultiArrayStamped leaderInfo;
-	float radii = 200.0;
 	float omega = 0.0;
 	float x_L_dot = 0.0;
 	float y_L_dot = 0.0;
@@ -139,24 +141,24 @@ void VirtualLeader::virtual_leader_information()
 	switch (this->trajectory)
 	{
 		case 'C':
-			omega = this->Vg_L/radii;
-			this->x_L = radii*cosf(omega*t);
-			this->y_L = radii*sinf(omega*t);
+			omega = this->Vg_L/this->radii;
+			this->x_L = this->radii*cosf(omega*t);
+			this->y_L = this->radii*sinf(omega*t);
 			this->z_L = -20.0;
-			x_L_dot = -radii*omega*sinf(omega*t);
-			y_L_dot = radii*omega*cosf(omega*t);
+			x_L_dot = -this->radii*omega*sinf(omega*t);
+			y_L_dot = this->radii*omega*cosf(omega*t);
 			this->z_L_dot = 0.0;
-			x_L_dotdot = -radii*pow(omega,2)*cosf(omega*t);
-			y_L_dotdot = -radii*pow(omega,2)*sinf(omega*t);
+			x_L_dotdot = -this->radii*pow(omega,2)*cosf(omega*t);
+			y_L_dotdot = -this->radii*pow(omega,2)*sinf(omega*t);
 			this->course_L = atan2f(y_L_dot, x_L_dot);
 			this->course_L_dot = (y_L_dotdot*x_L_dot-x_L_dotdot*y_L_dot)/(pow(x_L_dot,2)+pow(y_L_dot,2));
 			break;
 		case 'L':
-			this->x_L = this->Vg_L*t*cosf(dir);
-			this->y_L = this->Vg_L*t*sinf(dir);
+			this->x_L = this->Vg_L*t*cosf(this->dir);
+			this->y_L = this->Vg_L*t*sinf(this->dir);
 			this->z_L = -20.0;
-			x_L_dot = this->Vg_L*cosf(dir);
-			y_L_dot = this->Vg_L*sinf(dir);
+			x_L_dot = this->Vg_L*cosf(this->dir);
+			y_L_dot = this->Vg_L*sinf(this->dir);
 			this->z_L_dot = 0.0;
 			this->course_L = atan2f(y_L_dot, x_L_dot);
 			this->course_L_dot = 0;

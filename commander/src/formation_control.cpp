@@ -79,8 +79,10 @@ public:
 		// define UAV number
 		this->declare_parameter<int>("uav_ID", 0);
 		this->declare_parameter<std::string>("wind_com", "com_off");
+		this->declare_parameter<std::vector<double>>("gc", std::vector<double>({-7.0, 14.0, 0.0}));
 		this->vehicle_id = this->get_parameter("uav_ID").as_int()+1;
 		this->wind_com = this->get_parameter("wind_com").as_string();
+		this->formation_desired << this->get_parameter("gc").as_double_array()[0], this->get_parameter("gc").as_double_array()[1], this->get_parameter("gc").as_double_array()[2];
 		std::string uav;
 			
 		if (this->vehicle_id == 1){
@@ -104,9 +106,9 @@ public:
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 
 		vehicle_position_subscriber_ = this->create_subscription<VehicleLocalPosition>(uav+"/fmu/out/vehicle_local_position", qos, std::bind(&FormationControl::vehicle_position_callback,this, _1));
-		virtual_leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", qos, std::bind(&FormationControl::virtual_leader_callback, this, _1));
 		wind_estimation_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>(uav+"/wind_estimation_information", qos, std::bind(&FormationControl::wind_estimation_callback, this, _1));
 		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>(uav+"/fmu/out/vehicle_status", qos, std::bind(&FormationControl::vehicle_status_callback, this, _1));
+		virtual_leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", qos, std::bind(&FormationControl::virtual_leader_callback, this, _1));
 		// subsriber for plot
 		vehicle_attitude_subscriber_ = this->create_subscription<VehicleAttitude>(uav+"/fmu/out/vehicle_attitude", qos, std::bind(&FormationControl::vehicle_attitude_callback,this, _1));
 		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>(uav+"/fmu/out/airspeed_validated", qos, std::bind(&FormationControl::vehicle_airspeed_callback,this, _1));	
@@ -121,7 +123,8 @@ public:
 			}
 			RCLCPP_INFO(this->get_logger(), "service not available, waiting again...");
 		}
-	
+
+		static double t0 = this->get_clock()->now().seconds(); // s .seconds(); // s  
 		auto timer_callback = [this]() -> void {
 			if (offboard_setpoint_counter_ == 10) {
 				// Change to Offboard mode after 10 setpoints
@@ -139,12 +142,14 @@ public:
 					this->request_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_VTOL_TRANSITION, 4, 1);
 				}
 				else{
+					double t_now = this->get_clock()->now().seconds(); // s 
+					double t = t_now - t0;
 					// calculate the formation geometry
 					this->formation_geometry();
 					// offboard_control_mode needs to be paired with trajectory_setpoint
 					this->publish_offboard_control_mode(false, false, false, true, false);
 					if (this->vehicle_type == 2){
-						this->Lyapunov_based_formation_controller();
+						this->Lyapunov_based_formation_controller(t,70);
 					}
 				}
 			}
@@ -213,12 +218,13 @@ private:
 	float leader_z_dot = 0.0;
 	float leader_Vg = 0.0;
 	// formation
-	float gain[6] = {0.1, 0.1, 1.0, 1.0, 0.5, 3.0}; // le, fe, he, Va_e, psi_e, theta_e
+	float gain[6] = {0.1, 0.1, 1.0, 0.2, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e
+	// float gain[6] = {0.1, 0.1, 1.0, 0.4, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e
 	Vector3f formation_desired = Vector3f (2.5,14.0,0.0);
 	// Vector3f formation_desired = Vector3f (0.0,0.0,0.0);
 	Vector3f formation_error = Vector3f (0.0,0.0,0.0);
 	void formation_geometry();
-	void Lyapunov_based_formation_controller();
+	void Lyapunov_based_formation_controller(double t, int com_time);
 	
 	// vehicle status
 	unsigned int vehicle_type = 1; 
@@ -301,13 +307,13 @@ void FormationControl::vehicle_status_callback(const VehicleStatus &msg)
 void FormationControl::wind_estimation_callback(const self_msg::msg::Float32MultiArrayStamped &msg)
 {
 	// wind_observer_i
-	this->w_l_hat = msg.array.data[0];
-	this->w_f_hat = msg.array.data[1];
-	this->w_h_hat = msg.array.data[2];
+	// this->w_l_hat = msg.array.data[0];
+	// this->w_f_hat = msg.array.data[1];
+	// this->w_h_hat = msg.array.data[2];
 	
-	this->w_l = msg.array.data[6];
-	this->w_f = msg.array.data[7];
-	this->w_h = msg.array.data[8];
+	// this->w_l = msg.array.data[6];
+	// this->w_f = msg.array.data[7];
+	// this->w_h = msg.array.data[8];
 	
 	// wind_observer_g
 	this->w_l2_hat = msg.array.data[0];
@@ -349,7 +355,7 @@ void FormationControl::formation_geometry()
 
 }
 
-void FormationControl::Lyapunov_based_formation_controller()
+void FormationControl::Lyapunov_based_formation_controller(double t, int com_time)
 {
 	float c1 = this->gain[0];
 	float c2 = this->gain[1];
@@ -380,45 +386,50 @@ void FormationControl::Lyapunov_based_formation_controller()
 	float waf = 0.0;
 	float wah = 0.0; 
 	//////// controller design : step 1 ////////
-	if (this->wind_com == "w1"){
-		wl = this->w_l_hat;
-		wf = this->w_f_hat;
-		wh = this->w_h_hat;
-		waf = this->wa_f_hat;
-		wal = this->wa_l_hat;
-		wah = this->wa_h_hat;
-		std::cout<<"Comensation on : w1" <<std::endl;
-	}		
-	else if (this->wind_com == "w2"){
-		wl = this->w_l2_hat;
-		wf = this->w_f2_hat;
-		wh = this->w_h2_hat;
-		waf = this->wa_f_hat;
-		wal = this->wa_l_hat;
-		wah = this->wa_h_hat;
-		std::cout<<"Comensation on : w2" <<std::endl;
-	}		
-	else if (this->wind_com == "none"){
-		wl = 0.0;
-		wf = 0.0;
-		wh = 0.0;
-		waf = 0.0;
-		wal = 0.0;
-		wah = 0.0;
-		std::cout<<"Compensation off" <<std::endl;
-	}
-	else if (this->wind_com == "w"){
-		wl = this->w_l;
-		wf = this->w_f;
-		wh = this->w_h;
-		//todo obtain the real wind acceleration 
-		waf = 0.0;
-		wal = 0.0;
-		wah = 0.0;
-		std::cout<<"Compensation on : GT" <<std::endl;
+	if (t > com_time){
+		if (this->wind_com == "w1"){
+			wl = this->w_l_hat;
+			wf = this->w_f_hat;
+			wh = this->w_h_hat;
+			waf = this->wa_f_hat;
+			wal = this->wa_l_hat;
+			wah = this->wa_h_hat;
+			std::cout<<"Comensation on : w1" <<std::endl;
+		}		
+		else if (this->wind_com == "w2"){
+			wl = this->w_l2_hat;
+			wf = this->w_f2_hat;
+			wh = this->w_h2_hat;
+			waf = this->wa_f_hat;
+			wal = this->wa_l_hat;
+			wah = this->wa_h_hat;
+			std::cout<<"Comensation on : w2" <<std::endl;
+		}		
+		else if (this->wind_com == "none"){
+			wl = 0.0;
+			wf = 0.0;
+			wh = 0.0;
+			waf = 0.0;
+			wal = 0.0;
+			wah = 0.0;
+			std::cout<<"Compensation off" <<std::endl;
+		}
+		else if (this->wind_com == "w"){
+			wl = this->w_l;
+			wf = this->w_f;
+			wh = this->w_h;
+			//todo obtain the real wind acceleration 
+			waf = 0.0;
+			wal = 0.0;
+			wah = 0.0;
+			std::cout<<"Compensation on : GT" <<std::endl;
+		}
+		else{
+			std::cout<<"No wind com information, compensation off." <<std::endl;
+		}
 	}
 	else{
-		std::cout<<"No wind com information, compensation off." <<std::endl;
+		std::cout<<"Waiting observer to converge..., compensation off." <<std::endl;
 	}
 	Va_Fd = sqrt(pow((c1*le+this->leader_angular*fc+wl),2)+pow((c2*fe-this->leader_angular*lc+this->leader_Vg+wf),2));
 	psi_Fd = atan2f(-c1*le-this->leader_angular*fc-wl, c2*fe-this->leader_angular*lc+this->leader_Vg+wf)+this->leader_course;

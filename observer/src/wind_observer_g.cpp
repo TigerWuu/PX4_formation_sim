@@ -75,24 +75,38 @@ class WindObserver : public rclcpp::Node
 public:
 	WindObserver() : Node("wind_observer")
 	{	
+		this->declare_parameter<int>("uav_ID", 0);
+		int vehicle_id = this->get_parameter("uav_ID").as_int()+1;
+		
 		this->declare_parameter<double>("L", 1.0);
 		this->L = this->get_parameter("L").as_double();
+		this->declare_parameter<double>("L2", 1.0);
+		this->L2 = this->get_parameter("L2").as_double();
+		
+		std::string uav;
+		if (vehicle_id == 1){
+			uav = "";
+		}
+		else{
+	 		uav = "/px4_"+ std::to_string(this->get_parameter("uav_ID").as_int());
+		}
+
 		// publisher
-		wind_estimation_publisher_ = this->create_publisher<self_msg::msg::Float32MultiArrayStamped>("/wind_estimation_information", 10);
+		wind_estimation_publisher_ = this->create_publisher<self_msg::msg::Float32MultiArrayStamped>(uav+"/wind_estimation_information", 10);
 		// subscriber
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 
 		virtual_leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", qos, std::bind(&WindObserver::virtual_leader_callback, this, _1));
-		vehicle_attitude_subscriber_ = this->create_subscription<VehicleAttitude>("/fmu/out/vehicle_attitude", qos, std::bind(&WindObserver::vehicle_attitude_callback,this, _1));	
-		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>("/fmu/out/airspeed_validated", qos, std::bind(&WindObserver::vehicle_airspeed_callback,this, _1));	
-		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>("/fmu/out/vehicle_status", qos, std::bind(&WindObserver::vehicle_status_callback, this, _1));
+		vehicle_attitude_subscriber_ = this->create_subscription<VehicleAttitude>(uav+"/fmu/out/vehicle_attitude", qos, std::bind(&WindObserver::vehicle_attitude_callback,this, _1));	
+		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>(uav+"/fmu/out/airspeed_validated", qos, std::bind(&WindObserver::vehicle_airspeed_callback,this, _1));	
+		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>(uav+"/fmu/out/vehicle_status", qos, std::bind(&WindObserver::vehicle_status_callback, this, _1));
 		wind_subscriber_ = this->create_subscription<std_msgs::msg::Float32MultiArray>("/data/wind_true", qos, std::bind(&WindObserver::wind_callback, this, _1));
-		formation_subscriber_ = this->create_subscription<std_msgs::msg::Float32MultiArray>("/data/formation_error", qos, std::bind(&WindObserver::formation_info_callback, this, _1));
+		formation_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>(uav+"/data/formation_error", qos, std::bind(&WindObserver::formation_info_callback, this, _1));
 		
 		auto timer_callback = [this]() -> void {
 			// if (this->vehicle_type == 1){
-				float time_interval = 0.004;
+				float time_interval = 0.02;
 				float sigma_l = this->le_hat - this->le; 
 				float sigma_f = this->fe_hat - this->fe; 
 				float sigma_h = this->he_hat - this->he; 
@@ -113,7 +127,7 @@ public:
 				this->wind_information_publish();
 			// }
 		};
-		timer_ = this->create_wall_timer(4ms, timer_callback);
+		timer_ = this->create_wall_timer(20ms, timer_callback);
 	}
 
 private:
@@ -127,7 +141,7 @@ private:
 	rclcpp::Subscription<AirspeedValidated>::SharedPtr vehicle_airspeed_subscriber_ ;
 	rclcpp::Subscription<VehicleStatus>::SharedPtr vehicle_status_subscriber_ ; 
 	rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr wind_subscriber_;
-	rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr formation_subscriber_;
+	rclcpp::Subscription<self_msg::msg::Float32MultiArrayStamped>::SharedPtr formation_subscriber_;
 
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
 	
@@ -139,7 +153,7 @@ private:
 	void vehicle_airspeed_callback(const AirspeedValidated &msg);
 	void vehicle_status_callback(const VehicleStatus &msg);
 	void wind_callback(const std_msgs::msg::Float32MultiArray &msg);
-	void formation_info_callback(const std_msgs::msg::Float32MultiArray &msg);
+	void formation_info_callback(const self_msg::msg::Float32MultiArrayStamped &msg);
 
 	// observer function
 	static int sgn(float sigma);
@@ -167,8 +181,8 @@ private:
 	double yaw = 0.0;
 	float Va = 0.0;
 	// observer parameters
-	float L = 1.0;
-	float L2 = 0.1;
+	float L = 10.0;
+	float L2 = 1.0;
 	// observer variables
 	float le_hat = 0.0; 
 	float fe_hat = 0.0; 
@@ -256,15 +270,15 @@ void WindObserver::virtual_leader_callback(const self_msg::msg::Float32MultiArra
 	this->leader_Vg = msg.array.data[6];
 }
 
-void WindObserver::formation_info_callback(const std_msgs::msg::Float32MultiArray &msg)
+void WindObserver::formation_info_callback(const self_msg::msg::Float32MultiArrayStamped &msg)
 {
-	this->le = msg.data[0];
-	this->fe = msg.data[1];
-	this->he = msg.data[2];
+	this->le = msg.array.data[0];
+	this->fe = msg.array.data[1];
+	this->he = msg.array.data[2];
 	// desired formation
-	this->lc = msg.data[3];
-	this->fc = msg.data[4];
-	this->hc = msg.data[5];
+	this->lc = msg.array.data[3];
+	this->fc = msg.array.data[4];
+	this->hc = msg.array.data[5];
 }
 
 void WindObserver::vehicle_attitude_callback(const VehicleAttitude &msg)
@@ -329,6 +343,9 @@ void WindObserver::geometry_error_estimation(float sigma_l, float sigma_f, float
 	this->le_hat += le_dot_hat*time_int; 
 	this->fe_hat += fe_dot_hat*time_int; 
 	this->he_hat += he_dot_hat*time_int; 
+	// std::cout << "sigma_l: " << sigma_l << std::endl;
+	// std::cout << "sigma_f: " << sigma_f << std::endl;
+	// std::cout << "sigma_h: " << sigma_h << std::endl;
 }
 
 
