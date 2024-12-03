@@ -37,6 +37,12 @@ install(TARGETS
   virtual_leader 
   DESTINATION lib/${PROJECT_NAME})
 
+add_executable(leader src/leader.cpp)
+ament_target_dependencies(leader px4_msgs rclcpp std_msgs tf2 self_msg)
+install(TARGETS
+  leader 
+  DESTINATION lib/${PROJECT_NAME})
+
 add_executable(formation_control src/formation_control.cpp)
 ament_target_dependencies(formation_control px4_msgs rclcpp std_msgs tf2 self_msg)
 install(TARGETS

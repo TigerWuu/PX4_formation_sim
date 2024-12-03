@@ -78,9 +78,11 @@ public:
 	{	
 		// define UAV number
 		this->declare_parameter<int>("uav_ID", 0);
-		this->declare_parameter<std::string>("wind_com", "com_off");
+		this->declare_parameter<int>("leader", 0); // 0 means virtual leader
+		this->declare_parameter<std::string>("wind_com", "none");
 		this->declare_parameter<std::vector<double>>("gc", std::vector<double>({-7.0, 14.0, 0.0}));
 		this->vehicle_id = this->get_parameter("uav_ID").as_int()+1;
+		this->leader = this->get_parameter("leader").as_int();
 		this->wind_com = this->get_parameter("wind_com").as_string();
 		this->formation_desired << this->get_parameter("gc").as_double_array()[0], this->get_parameter("gc").as_double_array()[1], this->get_parameter("gc").as_double_array()[2];
 		std::string uav;
@@ -108,7 +110,14 @@ public:
 		vehicle_position_subscriber_ = this->create_subscription<VehicleLocalPosition>(uav+"/fmu/out/vehicle_local_position", qos, std::bind(&FormationControl::vehicle_position_callback,this, _1));
 		wind_estimation_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>(uav+"/wind_estimation_information", qos, std::bind(&FormationControl::wind_estimation_callback, this, _1));
 		vehicle_status_subscriber_ = this->create_subscription<VehicleStatus>(uav+"/fmu/out/vehicle_status", qos, std::bind(&FormationControl::vehicle_status_callback, this, _1));
-		virtual_leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", qos, std::bind(&FormationControl::virtual_leader_callback, this, _1));
+		
+		// 0 means virtual leader
+		if (this->leader == 0){
+			virtual_leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/virtual_leader_information", qos, std::bind(&FormationControl::virtual_leader_callback, this, _1));
+		}
+		else{
+			leader_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>("/leader_information", qos, std::bind(&FormationControl::leader_callback, this, _1));
+		}
 		// subsriber for plot
 		vehicle_attitude_subscriber_ = this->create_subscription<VehicleAttitude>(uav+"/fmu/out/vehicle_attitude", qos, std::bind(&FormationControl::vehicle_attitude_callback,this, _1));
 		vehicle_airspeed_subscriber_ = this->create_subscription<AirspeedValidated>(uav+"/fmu/out/airspeed_validated", qos, std::bind(&FormationControl::vehicle_airspeed_callback,this, _1));	
@@ -149,7 +158,7 @@ public:
 					// offboard_control_mode needs to be paired with trajectory_setpoint
 					this->publish_offboard_control_mode(false, false, false, true, false);
 					if (this->vehicle_type == 2){
-						this->Lyapunov_based_formation_controller(t,70);
+						this->Lyapunov_based_formation_controller(t,50);
 					}
 				}
 			}
@@ -181,6 +190,7 @@ private:
 	rclcpp::Subscription<VehicleLocalPosition>::SharedPtr vehicle_position_subscriber_ ;
 	rclcpp::Subscription<VehicleStatus>::SharedPtr vehicle_status_subscriber_ ;
 	rclcpp::Subscription<self_msg::msg::Float32MultiArrayStamped>::SharedPtr virtual_leader_subscriber_;
+	rclcpp::Subscription<self_msg::msg::Float32MultiArrayStamped>::SharedPtr leader_subscriber_;
 	rclcpp::Subscription<self_msg::msg::Float32MultiArrayStamped>::SharedPtr wind_estimation_subscriber_;
 	// sub for plot
 	rclcpp::Subscription<VehicleAttitude>::SharedPtr vehicle_attitude_subscriber_ ;
@@ -205,6 +215,7 @@ private:
 	// callback function
 	void response_callback(rclcpp::Client<px4_msgs::srv::VehicleCommand>::SharedFuture future);
 	void virtual_leader_callback(const self_msg::msg::Float32MultiArrayStamped &msg);
+	void leader_callback(const self_msg::msg::Float32MultiArrayStamped &msg);
 	void vehicle_position_callback(const VehicleLocalPosition &msg);
 	void vehicle_status_callback(const VehicleStatus &msg);
 	void wind_estimation_callback(const self_msg::msg::Float32MultiArrayStamped &msg);
@@ -217,9 +228,11 @@ private:
 	float leader_angular = 0.0;
 	float leader_z_dot = 0.0;
 	float leader_Vg = 0.0;
+	int leader = 0;	
 	// formation
-	float gain[6] = {0.1, 0.1, 1.0, 0.2, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e
-	// float gain[6] = {0.1, 0.1, 1.0, 0.4, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e
+	// float gain[6] = {0.1, 0.1, 1.0, 0.2, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e for manual tuning
+	// float gain[6] = {0.08, 0.08, 1.0, 0.16, 0.16, 1.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
+	float gain[6] = {0.08, 0.08, 1.0, 0.25, 0.2, 1.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
 	Vector3f formation_desired = Vector3f (2.5,14.0,0.0);
 	// Vector3f formation_desired = Vector3f (0.0,0.0,0.0);
 	Vector3f formation_error = Vector3f (0.0,0.0,0.0);
@@ -230,7 +243,7 @@ private:
 	unsigned int vehicle_type = 1; 
 	unsigned int in_transition_fw = 0; 
  	int vehicle_id = 1;
-	float z0 = -20;
+	float z0 = -10;
 	// wind information
 	std::string wind_com = "";
 	float w_l_hat = 0.0;
@@ -284,6 +297,15 @@ void FormationControl::vehicle_airspeed_callback(const AirspeedValidated &msg)
 }
 
 void FormationControl::virtual_leader_callback(const self_msg::msg::Float32MultiArrayStamped &msg)
+{	
+	this->leader_position_NED << msg.array.data[0], msg.array.data[1], msg.array.data[2];
+	this->leader_course = msg.array.data[3];
+	this->leader_angular = msg.array.data[4];
+	this->leader_z_dot = msg.array.data[5];
+	this->leader_Vg = msg.array.data[6];
+}
+
+void FormationControl::leader_callback(const self_msg::msg::Float32MultiArrayStamped &msg)
 {	
 	this->leader_position_NED << msg.array.data[0], msg.array.data[1], msg.array.data[2];
 	this->leader_course = msg.array.data[3];
@@ -462,9 +484,13 @@ void FormationControl::Lyapunov_based_formation_controller(double t, int com_tim
 	//////// controller design : step 2 ////////
 	// assume V_L_dot = theta_L_dot = 0
 	// define innerloop inverse time constant
-	float alpha = 0.26;
-	float beta = 0.1;
-	float gamma = 1.3;
+	// float alpha = 0.26;
+	// float beta = 0.1;
+	// float gamma = 1.3;
+	// inverse time constant from tfest
+	float alpha = 0.19;
+	float beta = 0.08;
+	float gamma = 2.0;
 	// define state error
 	float psi_e = this->yaw - psi_Fd;
 	float Va_e = this->Va - Va_Fd;
@@ -590,7 +616,7 @@ void FormationControl::publish_trajectory_setpoint()
 {
 	TrajectorySetpoint msg{};
 	msg.position = {0.0, 0.0, this->z0};
-	msg.yaw = 0 ; // [-PI:PI]
+	msg.yaw = M_PI_2 ; // [-PI:PI]
 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	trajectory_setpoint_publisher_->publish(msg);
 }

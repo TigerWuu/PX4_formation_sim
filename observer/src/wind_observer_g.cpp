@@ -105,7 +105,7 @@ public:
 		formation_subscriber_ = this->create_subscription<self_msg::msg::Float32MultiArrayStamped>(uav+"/data/formation_error", qos, std::bind(&WindObserver::formation_info_callback, this, _1));
 		
 		auto timer_callback = [this]() -> void {
-			// if (this->vehicle_type == 1){
+			if (this->vehicle_type == 2){
 				float time_interval = 0.02;
 				float sigma_l = this->le_hat - this->le; 
 				float sigma_f = this->fe_hat - this->fe; 
@@ -125,7 +125,7 @@ public:
 				this->wind_2_estimation(sigma_al, sigma_af, sigma_ah, time_interval);
 				// publish wind estimation (formation frame)
 				this->wind_information_publish();
-			// }
+			}
 		};
 		timer_ = this->create_wall_timer(20ms, timer_callback);
 	}
@@ -209,7 +209,7 @@ private:
 	float w_f = 0.0;
 	float w_h = 0.0;
 
-	// vehicle status
+	// vehicle status, 1 for multirotor, 2 for fixed-wing
 	unsigned int vehicle_type=1; 
 };
 // UniquePtr instead?

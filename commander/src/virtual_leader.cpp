@@ -142,7 +142,7 @@ void VirtualLeader::virtual_leader_information()
 	{
 		case 'C':
 			omega = this->Vg_L/this->radii;
-			this->x_L = this->radii*cosf(omega*t);
+			this->x_L = this->radii*cosf(omega*t) - this->radii;
 			this->y_L = this->radii*sinf(omega*t);
 			this->z_L = -20.0;
 			x_L_dot = -this->radii*omega*sinf(omega*t);
