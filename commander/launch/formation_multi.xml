@@ -12,6 +12,7 @@
   	<param name="leader" value="0"/> <!--leader UAV if leader != 0-->
     <param name="uav_ID" value="1"/>
     <param name="gc" value="0.0, 0.0, 0.0" value-sep=", "/>
+    <param name="offset" value="0.0, 0.0, 0.0" value-sep=", "/>
   	<param name="wind_com" value="$(var wind_com)"/>
   </node>
   <node pkg="observer" exec="wind_observer_g" output="screen" name="wind_observer" namespace="px4_1">
@@ -25,6 +26,7 @@
   	<param name="leader" value="$(var leader)"/>
   	<param name="uav_ID" value="2"/>
     <param name="gc" value="-7.0, 14.0, 0.0" value-sep=", "/>
+    <param name="offset" value="-3.0, -3.0, 0.0" value-sep=", "/>
   	<param name="wind_com" value="$(var wind_com)"/>
   </node>
   <node pkg="observer" exec="wind_observer_g" output="screen" name="wind_observer" namespace="px4_2">
@@ -38,6 +40,7 @@
   	<param name="leader" value="$(var leader)"/>
   	<param name="uav_ID" value="3"/>
     <param name="gc" value="7.0, 14.0, 0.0" value-sep=", "/>
+    <param name="offset" value="-3.0, 3.0, 0.0" value-sep=", "/>
   	<param name="wind_com" value="$(var wind_com)"/>
   </node>
   <node pkg="observer" exec="wind_observer_g" output="screen" name="wind_observer" namespace="px4_3">
@@ -53,8 +56,8 @@
   	<param name="radii" value="$(var radii)"/>
   </node>
   <!--leader-->
-  <node pkg="commander" exec="leader" output="screen" name="virtual_leader">
-  	<param name="leader_UAV_ID" value="$(var leader)"/>
+  <node pkg="commander" exec="leader" output="screen" name="leader">
+  	<param name="leader_uav_ID" value="$(var leader)"/>
   </node>
  
 </launch>

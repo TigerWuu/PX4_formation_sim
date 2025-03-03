@@ -167,6 +167,7 @@ void Leader::leader_information_publish()
 
 void Leader::vehicle_local_position_callback(const VehicleLocalPosition &msg)
 {	
+	std::cout << "leader position: " << msg.x << " " << msg.y << " " << msg.z << std::endl;	
 	this->leader_x = msg.x;
 	this->leader_y = msg.y;
 	this->leader_z = msg.z;

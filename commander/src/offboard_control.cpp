@@ -216,7 +216,7 @@ void OffboardControl::publish_attitude_setpoint()
 	tf2::Quaternion attitude_quat;
 	// double t_now = this->get_clock()->now().seconds();
 	float roll_set = M_PI/36;
-	float pitch_set = M_PI/36; // 5 deg
+	float pitch_set = M_PI/18; // 10 deg
 	float yaw_set = M_PI/4; // 45 deg
 	// float yaw_set = M_PI/4+ M_PI/24*sinl(t_now*0.6); // 60 deg
 	// float k_y = 0.2;

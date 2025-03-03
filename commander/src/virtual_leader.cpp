@@ -144,7 +144,7 @@ void VirtualLeader::virtual_leader_information()
 			omega = this->Vg_L/this->radii;
 			this->x_L = this->radii*cosf(omega*t) - this->radii;
 			this->y_L = this->radii*sinf(omega*t);
-			this->z_L = -20.0;
+			this->z_L = -90.0;
 			x_L_dot = -this->radii*omega*sinf(omega*t);
 			y_L_dot = this->radii*omega*cosf(omega*t);
 			this->z_L_dot = 0.0;
@@ -156,7 +156,7 @@ void VirtualLeader::virtual_leader_information()
 		case 'L':
 			this->x_L = this->Vg_L*t*cosf(this->dir);
 			this->y_L = this->Vg_L*t*sinf(this->dir);
-			this->z_L = -20.0;
+			this->z_L = -90.0;
 			x_L_dot = this->Vg_L*cosf(this->dir);
 			y_L_dot = this->Vg_L*sinf(this->dir);
 			this->z_L_dot = 0.0;

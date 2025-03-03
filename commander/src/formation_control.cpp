@@ -81,10 +81,12 @@ public:
 		this->declare_parameter<int>("leader", 0); // 0 means virtual leader
 		this->declare_parameter<std::string>("wind_com", "none");
 		this->declare_parameter<std::vector<double>>("gc", std::vector<double>({-7.0, 14.0, 0.0}));
+		this->declare_parameter<std::vector<double>>("offset", std::vector<double>({0.0, 0.0, 0.0}));
 		this->vehicle_id = this->get_parameter("uav_ID").as_int()+1;
 		this->leader = this->get_parameter("leader").as_int();
 		this->wind_com = this->get_parameter("wind_com").as_string();
 		this->formation_desired << this->get_parameter("gc").as_double_array()[0], this->get_parameter("gc").as_double_array()[1], this->get_parameter("gc").as_double_array()[2];
+		this->offset << this->get_parameter("offset").as_double_array()[0], this->get_parameter("offset").as_double_array()[1], this->get_parameter("offset").as_double_array()[2];
 		std::string uav;
 			
 		if (this->vehicle_id == 1){
@@ -232,10 +234,11 @@ private:
 	// formation
 	// float gain[6] = {0.1, 0.1, 1.0, 0.2, 0.2, 3.0}; // le, fe, he, Va_e, psi_e, theta_e for manual tuning
 	// float gain[6] = {0.08, 0.08, 1.0, 0.16, 0.16, 1.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
-	float gain[6] = {0.08, 0.08, 1.0, 0.25, 0.2, 1.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
+	// float gain[6] = {0.08, 0.08, 1.0, 0.25, 0.2, 1.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
+	float gain[6] = {0.2, 0.2, 0.5, 0.2, 0.2, 0.5}; // le, fe, he, Va_e, psi_e, theta_e for tfest
 	Vector3f formation_desired = Vector3f (2.5,14.0,0.0);
-	// Vector3f formation_desired = Vector3f (0.0,0.0,0.0);
 	Vector3f formation_error = Vector3f (0.0,0.0,0.0);
+	Vector3f offset = Vector3f (0.0,0.0,0.0);
 	void formation_geometry();
 	void Lyapunov_based_formation_controller(double t, int com_time);
 	
@@ -316,7 +319,7 @@ void FormationControl::leader_callback(const self_msg::msg::Float32MultiArraySta
 
 void FormationControl::vehicle_position_callback(const VehicleLocalPosition &msg)
 {
-	this->vehicle_position_NED << msg.x, msg.y, msg.z;
+	this->vehicle_position_NED << msg.x+this->offset[0], msg.y+this->offset[1], msg.z+this->offset[2];
 	// std::cout << this->vehicle_position_NED <<std::endl;
 }
 
@@ -524,6 +527,13 @@ void FormationControl::Lyapunov_based_formation_controller(double t, int com_tim
 	}
 	else if (Va_Fc>28){
 		Va_Fc = 28;
+	}
+	
+	while (psi_Fc > M_PI){
+		psi_Fc -= 2*M_PI;
+	}
+	while (psi_Fc < -M_PI){
+		psi_Fc += 2*M_PI;
 	}
 
 	// send control command
