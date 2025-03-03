@@ -1,4 +1,4 @@
-# PX4 formation simulation
+# PX4 Formation Simulation
 A ROS2 package providing the high-level commands for PX4 UAV.
 
 ## Contents
