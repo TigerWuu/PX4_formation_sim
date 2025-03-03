@@ -1,5 +1,11 @@
 # PX4 formation simulation
-A ROS2 package providing the high-level commands for PX4 UAV
+A ROS2 package providing the high-level commands for PX4 UAV.
+
+## Contents
+
+* [Requirements](#requirements)
+* [Installation](#installation)
+
 ## Requirements
 * Ubuntu 22.04 LTS
 * Gz sim Garden 7.9.0
